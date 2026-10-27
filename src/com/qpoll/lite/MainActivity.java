@@ -124,7 +124,7 @@ public final class MainActivity extends Activity {
      */
     private final Shizuku.UserServiceArgs bridgeArgs = new Shizuku.UserServiceArgs(
             new ComponentName("com.qpoll.lite", "com.qpoll.lite.ShellBridge"))
-            .tag("nfc-lite").version(59).daemon(false).processNameSuffix("nfc_shell");
+            .tag("nfc-lite").version(60).daemon(false).processNameSuffix("nfc_shell");
 
     private final ServiceConnection bridgeConnection = new ServiceConnection() {
         @Override public void onServiceConnected(ComponentName name, IBinder binder) {
