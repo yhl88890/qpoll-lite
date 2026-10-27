@@ -1,0 +1,19 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.qpoll.lite" android:versionCode="59" android:versionName="1.4.19">
+    <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="34" />
+    <uses-permission android:name="android.permission.NFC" />
+    <!-- 诊断版专用：让 App 自己能发 Q-Poll，避免引入 Shizuku 变量。正式版会去掉。 -->
+    <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" />
+    <uses-permission android:name="moe.shizuku.manager.permission.API_V23" />
+    <uses-feature android:name="android.hardware.nfc" android:required="true" />
+    <application android:label="墨小七" android:theme="@style/AppTheme" android:icon="@mipmap/ic_launcher" android:allowBackup="false" android:supportsRtl="true">
+        <meta-data android:name="moe.shizuku.client.V3_SUPPORT" android:value="true" />
+        <provider android:name="rikka.shizuku.ShizukuProvider" android:authorities="com.qpoll.lite.shizuku" android:multiprocess="false" android:enabled="true" android:exported="true" android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
+        <activity android:name=".MainActivity" android:exported="true" android:launchMode="singleTask" android:screenOrientation="portrait">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+            <activity android:name="com.qpoll.lite.CropPane" android:screenOrientation="portrait" android:theme="@android:style/Theme.Material.NoActionBar" />
+    </application>
+</manifest>
