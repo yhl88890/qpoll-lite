@@ -2,6 +2,20 @@
 
 用手机 NFC 直刷四色墨水屏手机壳的安卓 App。从 [QPollLab](https://github.com/yhl88890/huawei-nfc-eink-myron) 改造分支演进而来，本仓库是独立精简版：前台直连、零特权优先、设备画像双路适配。
 
+## 来源与致谢（代码出处）
+
+本项目**不是从零写的**，代码站在下面这些项目的肩膀上，按血缘从远到近：
+
+| 来源 | 拿了什么 | 许可 |
+|---|---|---|
+| [kur0neko/huawei-epd-pn532](https://github.com/kur0neko/huawei-epd-pn532) | NFC 协议层与工厂扫描打包（`PanelProtocol` 的 D1/D3/D4 指令序列、四色扫描方向、PIN 流程）——**最早的代码起点** | PolyForm Noncommercial 1.0.0（见 `assets/licenses/`） |
+| 墨小佳（Reink Case，商业 App） | 四档出图算法（鎏金/质感/色阶/水墨：色彩矩阵 + Atkinson 抖动），从其 Flutter debug 构建提取学习，仅作非商业研究与互操作用途 | 算法归原作者，本项目不包含其代码与资源 |
+| [wiwiwei/ink-nfc-lab](https://github.com/wiwiwei/ink-nfc-lab) | NFC 寻卡-传图-刷新流程参考（姊妹仓库 [Ink NFC Lab myron 分支](https://github.com/yhl88890/huawei-nfc-eink-myron) 的上游） | 见其仓库 |
+| QPollLab（`org.nfcresearch.qpolllab`） | 工程基底：UI 骨架、PanelSession 会话结构由此改造而来 | 见其仓库 |
+| [yhl88890/huawei-nfc-eink-myron](https://github.com/yhl88890/huawei-nfc-eink-myron) | **本仓库的直接前身**——QPollLab 改造分支（Q-Poll 兼容层 + 前台直连，SN100U/SN220 双机验证），墨小七是在其基础上删减重整的精简版 | PolyForm Noncommercial 1.0.0 |
+
+一句话版本：**kur0neko 的协议 + 墨小佳的算法 + QPollLab 的壳 → myron 改造分支 → 墨小七（本仓库）**。
+
 ## 功能
 
 - **选图 → 手动裁切 → 出图 → NFC 刷屏** 全链路
