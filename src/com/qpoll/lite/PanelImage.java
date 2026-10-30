@@ -171,7 +171,7 @@ public final class PanelImage {
         // 预览从打包后的字节回读，所见即所发（A0 的转置也包含在内）
         Bitmap image = Bitmap.createBitmap(type.preview(packed), PanelProtocol.WIDTH,
                 PanelProtocol.HEIGHT, Bitmap.Config.ARGB_8888);
-        String settings = ReinkRaster.MODES[mode] + " · 翻转密度 "
+        String settings = ReinkRaster.MODES[mode] + " · 非白占比 "
                 + density(codes, PanelProtocol.WIDTH, PanelProtocol.HEIGHT) + "% · 屏型 " + type;
         return new Prepared(image, packed, settings, panelType);
     }
@@ -202,13 +202,18 @@ public final class PanelImage {
         return result;
     }
 
-    /** 黑点占比（%）。只是显示信息，别拿它当清晰度指标——墨小佳四档实测 7%–67% 全都能看。 */
+    /**
+     * 非白占比（%）：黑 / 黄 / 红都算「要上电、要翻转的像素」，只有纯白不计。
+     *
+     * <p>旧版只数纯黑（code 0），把黄（2）红（3）全漏了，还挂着「翻转密度」的名字——
+     * 数值自然跟肉眼对不上。改成非白占比后，主体越白这个值越低，跟「轻不轻」一致。
+     */
     static int density(byte[] codes, int width, int height) {
-        int black = 0;
+        int lit = 0;
         for (int row = 0; row < height; row++)
             for (int column = 0; column < width; column++)
-                if ((codes[row * width + column] & 3) == 0) black++;
-        return Math.round(100f * black / (width * (float) height));
+                if ((codes[row * width + column] & 3) != 1) lit++;
+        return Math.round(100f * lit / (width * (float) height));
     }
 
 }
