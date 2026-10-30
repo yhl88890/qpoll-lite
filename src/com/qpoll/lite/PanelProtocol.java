@@ -147,16 +147,34 @@ public final class PanelProtocol {
     /**
      * 启动刷新（D4）。
      *
-     * <p>时间参数编码为 {@code 0x80 | (毫秒/100)}，所以 0x94 = 2000 ms。
+     * <p>第 3 字节是上电等待，编码为 {@code 0x80 | (毫秒/100)}，所以 0x94 = 2000 ms、0x85 = 500 ms。
+     * 实测确实生效：2000 ms 时屏 3.85 秒回 SW，500 ms 时 2.26 秒回，差 1.59 秒 ≈ 1.5 秒。
      *
-     * <p><b>第 4 个字节为什么是 0x80</b>：墨小佳官方发的是 {@code F0 D4 85 00 00}，
-     * 我照着改成 0x00 之后，K90 上 D4 直接从「9000 启动成功」退化成「2.5 秒后 SW=68CA」，
-     * 也就是屏连启动都不肯。改回 0x80 才能过 D4。所以这个字节不是随意值，
-     * <b>别再按官方源码擅自改它</b>——官方那份是给它自己那批屏的。
+     * <p><b>第 4 字节 0x80 / 0x00 的语义（2026-10-31 全量定案，8 份日志逐条归因，见台账）：</b>
+     * <ul>
+     *   <li>{@code 0x80}（我们用）：屏在 D4 这一步<b>不查供电</b>，「收到即回」。
+     *       上电等待一结束就回 9000，不等刷完，所以外面必须自己保场 20 秒。</li>
+     *   <li>{@code 0x00}（官方墨小佳）：屏在 D4 这一步<b>真查供电</b>，「刷完才回」。
+     *       官方在小线圈上实测 D4 阻塞 17.95 秒 = 0.5 秒上电 + 17.4 秒刷屏。</li>
+     * </ul>
+     *
+     * <p><b>历史教训（曾三重张冠李戴）</b>：旧注释写「改成 0x00 之后 K90 上 2.5 秒后 SW=68CA」。
+     * 全量核对后确认：那 2 次 68CA 实际是<b>官方自己发的 {@code F0 D4 85 00 00}</b>、
+     * 在 <b>12T + 大线圈（贴合差）</b>上报的；K90 的 68CA 则是 D4 之后保场查询（DE）的应答。
+     * 机型、归属全记错了。<b>68CA 的根因是供电/贴合不足（物理层），不是这个字节。</b>
+     * 这个字节只决定「屏查不查」：贴合差时 {@code 0x00} 会如实报 68CA，{@code 0x80} 则不报。
+     *
+     * <p>在我们贴合好的小线圈上，官方 0x00 跑过 1 次没有报错。若将来改用 0x00，
+     * D4 会自己等到刷完，本类的 20 秒 DE 保场可以整段砍掉（总时长约 39 秒 → 35 秒）。
      */
-    public static byte[] d4(int powerMs) {
+    public static byte[] d4(int powerMs,boolean officialCheck) {
         if(powerMs<100||powerMs>12700||powerMs%100!=0)throw new IllegalArgumentException("上电等待参数错误");
-        return new byte[]{(byte)0xF0,(byte)0xD4,(byte)(0x80|powerMs/100),(byte)0x80,0};
+        /*
+         * 第 4 字节：0x80 = 收到即回（不查电）；0x00 = 真查电、刷完才回（官方模式）。
+         * 0x00 模式下 D4 会阻塞到屏刷完（小线圈实测 17.95 s），exchange 超时必须 ≥30 s
+         * （write() 里已传 30000，PanelSession 还会把它设进 IsoDep.setTimeout）。
+         */
+        return new byte[]{(byte)0xF0,(byte)0xD4,(byte)(0x80|powerMs/100),(byte)(officialCheck?0x00:0x80),0};
     }
     private final Transport transport;
     private final Control control;
@@ -180,11 +198,15 @@ public final class PanelProtocol {
         Info info=parseInfo(exchange(D1,"D1",5000,true));
         control.event("IDENTITY",info.description());return info;
     }
-    public boolean write(byte[] packed,int powerMs,int pollMs) throws Exception {
+    /**
+     * 上电等待 = 官方值 500 ms，唯一档（10-31 阿亮定案：500ms 两台手机实测全过，多余档位清理）。
+     */
+    public static final int POWER_MS = 500;
+    public boolean write(byte[] packed,boolean officialCheck) throws Exception {
         if(packed.length!=IMAGE_BYTES)throw new IllegalArgumentException("图像必须为 105984 字节");
-        if(pollMs<0||pollMs>500)throw new IllegalArgumentException("忙状态查询间隔必须为 0–500 ms");
-        byte[] refresh=d4(powerMs); // Validate every option before any authentication/write.
-        control.event("TIMING","忙状态查询间隔="+pollMs+" ms（每次应答后等待）");
+        byte[] refresh=d4(POWER_MS,officialCheck); // Validate every option before any authentication/write.
+        control.event("TIMING","上电等待="+POWER_MS+" ms（官方值）；查电模式="
+                +(officialCheck?"官方（屏查电，刷完才回）":"快速（收到即回，配合保场 20 秒）"));
         Info initial=identify();
         packed=PanelType.forScan(packed,initial.topDown());
         control.event("SCAN","采用板内扫描方向="+(initial.topDown()?"01（从上到下）":"00（从下到上）")+"；不改写驱动配置");
@@ -229,7 +251,7 @@ public final class PanelProtocol {
         int finalStatus=0;
         while(attempt<3) {
             attempt++;
-            byte[] response=exchange(refresh,"D4 刷新（上电等待 "+powerMs+" ms）",30000,false);
+            byte[] response=exchange(refresh,"D4 刷新（上电等待 "+POWER_MS+" ms）",30000,false);
             finalStatus=status(response);
             if(finalStatus==0x9000||finalStatus==0x68CA)break;
             if(finalStatus==0x6986) {
@@ -240,6 +262,15 @@ public final class PanelProtocol {
             break;
         }
         if(finalStatus==0x9000) {
+            if(officialCheck) {
+                /*
+                 * 【官方查电模式 0x00】屏在第 4 字节=0x00 时会自己查电、刷完才回 9000。
+                 * 所以这边的 9000 = 屏亲口说「刷完了」，不需要再保场 20 秒（保了也是白等）。
+                 * 这正是官方 refreshScreen() 的行为：发一次 D4，回 9000 即收工。
+                 */
+                control.event("REFRESH_DONE","屏报告刷新完成（官方查电模式，未额外保场）；请目视确认画面");
+                return true;
+            }
             /*
              * 收到 9000 只代表「刷新命令受理了」，**不代表刷完了**。
              *

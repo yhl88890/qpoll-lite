@@ -57,15 +57,12 @@ import rikka.shizuku.Shizuku;
 public final class MainActivity extends Activity {
     /** 寻卡窗口（秒）。实测 10 秒够把屏贴上去。 */
     private static final int SCAN_SECONDS = 10;
-    private static final int[] POWER_TIMES = {500, 1000, 2000, 3000, 4000, 5000, 8000, 12000};
-    /**
-     * 上电等待默认档：2000 ms。
-     *
-     * <p>不是墨小佳官方那个 500 ms——实测 500 ms 时 K90 上 D4 连启动都不肯，直接回 68CA；
-     * 2000 ms 才过。屏刷新前要先升压，给的时间太短屏直接拒绝。
+    /*
+     * 上电等待已固定为官方值 500ms（PanelProtocol.POWER_MS），档位设置已删——
+     * 10-31 阿亮定案：500ms 两台手机实测全过，历史 8 档从未有用武之地；
+     * 「K90 上 500ms 报 68CA」的旧说法无日志支撑（68CA = 贴合/供电物理层）。
+     * 状态查询间隔（pollMs）为死参数，一并删除。
      */
-    private static final int DEFAULT_POWER = 2;
-    private static final int[] POLL_TIMES = {0, 10, 20, 50, 100, 200, 300, 400, 500};
     private static final String PREFS = "lite-settings";
     private static final String INTERFACE = "com.qpoll.lite.NfcSession";
 
@@ -247,12 +244,8 @@ public final class MainActivity extends Activity {
         stopButton.setOnClickListener(v -> requestStop("用户停止"));
         root.addView(stopButton, new LinearLayout.LayoutParams(-1, dp(40)));
 
-        // 上电等待默认 2000 ms；升级时把老安装里存的值一次性重置过来，
-        // 免得升级后还踩到 500 ms 那种过短的参数。
-        if (getSharedPreferences(PREFS, MODE_PRIVATE).getInt("settingsVersion", 0) < 3) {
-            getSharedPreferences(PREFS, MODE_PRIVATE).edit()
-                    .putInt("power", DEFAULT_POWER).putInt("settingsVersion", 3).apply();
-        }
+        // （历史：settingsVersion 3/4 曾负责迁移上电等待档位；档位设置已删，迁移一并清掉，
+        //  老安装 sp 里遗留的 power/poll 键不再被读取，无副作用。）
         mode = getSharedPreferences(PREFS, MODE_PRIVATE).getInt("mode", 1);
         letterbox = getSharedPreferences(PREFS, MODE_PRIVATE).getBoolean("letterbox", false);
         cover = !letterbox;
@@ -584,7 +577,8 @@ public final class MainActivity extends Activity {
         new AlertDialog.Builder(this)
                 .setTitle("写入这块墨水屏？")
                 .setMessage("会替换屏上当前的画面。\n\n风格：" + prepared.settings
-                        + "\n上电等待：" + powerMs() + " ms"
+                        + "\n上电等待：" + PanelProtocol.POWER_MS + " ms（官方值）"
+                        + "\n查电模式：" + (officialCheck() ? "官方（刷完才回）" : "快速（收到即回）")
                         + "\n\n贴稳别动，全程保持本页在前台，直到提示结束。中途断开可能留下半张图。")
                 .setNegativeButton("再看看", null)
                 .setPositiveButton("开始刷新", (d, w) -> startRefresh()).show();
@@ -604,8 +598,7 @@ public final class MainActivity extends Activity {
             job.put("panelType", prepared.panelType);
             job.put("imageFile", imageFile.getAbsolutePath());
             job.put("sha256", sha);
-            job.put("powerMs", powerMs());
-            job.put("pollMs", pollMs());
+            job.put("officialCheck", officialCheck());
             try (FileOutputStream out = new FileOutputStream(jobFile)) { out.write(job.toString().getBytes("UTF-8")); }
             append("图片参数：" + prepared.settings);
         } catch (Exception e) {
@@ -953,13 +946,13 @@ public final class MainActivity extends Activity {
 
     // ───────────────────────── 设置 ─────────────────────────
 
-    private int powerMs() {
-        return POWER_TIMES[Math.max(0, Math.min(POWER_TIMES.length - 1,
-                getSharedPreferences(PREFS, MODE_PRIVATE).getInt("power", DEFAULT_POWER)))];
-    }
-    private int pollMs() {
-        return POLL_TIMES[Math.max(0, Math.min(POLL_TIMES.length - 1,
-                getSharedPreferences(PREFS, MODE_PRIVATE).getInt("poll", POLL_TIMES.length - 1)))];
+    /**
+     * D4 第 4 字节查电模式：false = 0x80 收到即回（现状，配合 20 秒保场）；
+     * true = 0x00 官方查电（屏刷完才回，省约 4 秒，保场由屏自己兜）。
+     * 10-31 定案：贴合差时 0x00 会如实报 68CA——贴合好才建议开。
+     */
+    private boolean officialCheck() {
+        return getSharedPreferences(PREFS, MODE_PRIVATE).getBoolean("officialCheck", false);
     }
 
     private void showSettings() {
@@ -983,39 +976,21 @@ public final class MainActivity extends Activity {
         body.addView(panel, new LinearLayout.LayoutParams(-1, dp(44)));
         body.addView(text("改错了会刷出横向错位的图，A0 换 A1 重刷即可恢复。", 11, 0xff68766e));
 
-        body.addView(text("上电等待", 13, 0xff52635d));
-        final Spinner power = new Spinner(this);
-        String[] powerLabels = new String[POWER_TIMES.length];
-        for (int i = 0; i < POWER_TIMES.length; i++)
-            powerLabels[i] = POWER_TIMES[i] + " ms" + (i == DEFAULT_POWER ? "（默认 · 官方值）" : i == POWER_TIMES.length - 1 ? "（协议上限 12700）" : "");
-        power.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, powerLabels));
-        int savedPower = getSharedPreferences(PREFS, MODE_PRIVATE).getInt("power", DEFAULT_POWER), selPower = DEFAULT_POWER;
-        for (int i = 0; i < POWER_TIMES.length; i++) if (i == savedPower) selPower = i;
-        power.setSelection(selPower);
-        power.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
-            public void onItemSelected(AdapterView<?> p, View v, int pos, long id) {
-                getSharedPreferences(PREFS, MODE_PRIVATE).edit().putInt("power", pos).apply();
-            }
-            public void onNothingSelected(AdapterView<?> p) { }
-        });
-        body.addView(power, new LinearLayout.LayoutParams(-1, dp(44)));
+        body.addView(text("上电等待固定 500 ms（官方值），无需设置。", 11, 0xff68766e));
 
-        body.addView(text("状态查询间隔", 13, 0xff52635d));
-        final Spinner poll = new Spinner(this);
-        String[] pollLabels = new String[POLL_TIMES.length];
-        for (int i = 0; i < POLL_TIMES.length; i++)
-            pollLabels[i] = POLL_TIMES[i] == 0 ? "0 ms · 连续查询" : POLL_TIMES[i] + " ms" + (i == POLL_TIMES.length - 1 ? "（默认）" : "");
-        poll.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, pollLabels));
-        int savedPoll = getSharedPreferences(PREFS, MODE_PRIVATE).getInt("poll", POLL_TIMES.length - 1), selPoll = POLL_TIMES.length - 1;
-        for (int i = 0; i < POLL_TIMES.length; i++) if (i == savedPoll) selPoll = i;
-        poll.setSelection(selPoll);
-        poll.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+        body.addView(text("上电查电模式", 13, 0xff52635d));
+        final Spinner checkMode = new Spinner(this);
+        String[] checkLabels = {"快速（默认）· 屏收到就回，App 保场 20 秒", "官方查电 · 屏刷完才回，省约 4 秒（屏自己兜保电）"};
+        checkMode.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, checkLabels));
+        checkMode.setSelection(officialCheck() ? 1 : 0);
+        checkMode.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
             public void onItemSelected(AdapterView<?> p, View v, int pos, long id) {
-                getSharedPreferences(PREFS, MODE_PRIVATE).edit().putInt("poll", pos).apply();
+                getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean("officialCheck", pos == 1).apply();
             }
             public void onNothingSelected(AdapterView<?> p) { }
         });
-        body.addView(poll, new LinearLayout.LayoutParams(-1, dp(44)));
+        body.addView(checkMode, new LinearLayout.LayoutParams(-1, dp(44)));
+        body.addView(text("官方查电模式贴合差时会如实报 68CA；贴合不稳就用快速模式。", 11, 0xff68766e));
 
         final android.widget.CheckBox letterboxBox = new android.widget.CheckBox(this);
         letterboxBox.setText("完整显示（留白，不裁掉边缘）");
