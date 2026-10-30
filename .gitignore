@@ -1,1 +1,13 @@
+# 构建中间产物
+build/
+
+# 安装包与构建附属文件只走 GitHub Releases，不进库
 dist/
+
+# 根目录的调试截图与运行日志（注意：只忽略根目录，res/ 里的图标资源要保留）
+/*.png
+/*.log
+
+# 设计过程与探针代码，不对外
+icon-candidates/
+probe/
