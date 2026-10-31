@@ -59,7 +59,13 @@ public final class PanelSession {
             // probe（兼容性自检）和 identity（只读检查）做的事一样：读一遍屏幕规格。
             // 区别只在结论文案，协议层不要写图——probe 根本没有图，走 write 会空指针。
             if(mode.equals("identity")||mode.equals("probe"))protocol.identify();
-            else protocol.write(image,job.optBoolean("officialCheck",false));
+            else {
+                if(job.optBoolean("panelA0",false)) {
+                    image=PanelProtocol.mapA0Rows(image);
+                    events.emit("PANEL_A0","屏幕类型=A0：控制器行交错重排已应用（A1 屏误选会隔列错乱，改回重刷即可）");
+                }
+                protocol.write(image,job.optBoolean("officialCheck",false));
+            }
         } finally {try{iso.close();}catch(Exception e){events.emit("CLOSE_ERROR","关闭 ISO-DEP："+e);}}
     }
     private static byte[] read(File file,int max)throws Exception {

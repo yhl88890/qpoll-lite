@@ -579,6 +579,7 @@ public final class MainActivity extends Activity {
                 .setMessage("会替换屏上当前的画面。\n\n风格：" + prepared.settings
                         + "\n上电等待：" + PanelProtocol.POWER_MS + " ms（官方值）"
                         + "\n查电模式：" + (officialCheck() ? "官方（刷完才回）" : "快速（收到即回）")
+                        + "\n屏幕类型：" + (panelA0() ? "A0（行交错）" : "A1（默认行序）")
                         + "\n\n贴稳别动，全程保持本页在前台，直到提示结束。中途断开可能留下半张图。")
                 .setNegativeButton("再看看", null)
                 .setPositiveButton("开始刷新", (d, w) -> startRefresh()).show();
@@ -599,6 +600,7 @@ public final class MainActivity extends Activity {
             job.put("imageFile", imageFile.getAbsolutePath());
             job.put("sha256", sha);
             job.put("officialCheck", officialCheck());
+            job.put("panelA0", panelA0());
             try (FileOutputStream out = new FileOutputStream(jobFile)) { out.write(job.toString().getBytes("UTF-8")); }
             append("图片参数：" + prepared.settings);
         } catch (Exception e) {
@@ -955,6 +957,16 @@ public final class MainActivity extends Activity {
         return getSharedPreferences(PREFS, MODE_PRIVATE).getBoolean("officialCheck", false);
     }
 
+    /**
+     * 屏幕实物变体：false = A1 常规行序（默认，我们两块验证屏都是）；
+     * true = A0 控制器行交错（打包后按 row→偶数位/倒序奇数位重排再发）。
+     * D1 读不出屏型；选错不会坏屏，画面会「隔列错乱 + 半边倒序」，改对重刷即可。
+     * A0 映射来自 ZhaoGY-N v2.10 的逐字节比对结论，未经我们实物验证——靠网友实测反馈。
+     */
+    private boolean panelA0() {
+        return getSharedPreferences(PREFS, MODE_PRIVATE).getBoolean("panelA0", false);
+    }
+
     private void showSettings() {
         LinearLayout body = new LinearLayout(this);
         body.setOrientation(LinearLayout.VERTICAL);
@@ -991,6 +1003,20 @@ public final class MainActivity extends Activity {
         });
         body.addView(checkMode, new LinearLayout.LayoutParams(-1, dp(44)));
         body.addView(text("官方查电模式贴合差时会如实报 68CA；贴合不稳就用快速模式。", 11, 0xff68766e));
+
+        body.addView(text("屏幕类型（实物变体）", 13, 0xff52635d));
+        final Spinner panelSel = new Spinner(this);
+        String[] panelLabels = {"A1（默认）· 常规行序——现有四色屏基本都是这类", "A0 · 交错行序——刷出隔列错乱画面说明屏是 A0"};
+        panelSel.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, panelLabels));
+        panelSel.setSelection(panelA0() ? 1 : 0);
+        panelSel.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            public void onItemSelected(AdapterView<?> p, View v, int pos, long id) {
+                getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean("panelA0", pos == 1).apply();
+            }
+            public void onNothingSelected(AdapterView<?> p) { }
+        });
+        body.addView(panelSel, new LinearLayout.LayoutParams(-1, dp(44)));
+        body.addView(text("D1 读不出屏型，只能按实物或卖家说明选。选错不会坏屏：画面会隔列错乱，改对重刷即可。", 11, 0xff68766e));
 
         final android.widget.CheckBox letterboxBox = new android.widget.CheckBox(this);
         letterboxBox.setText("完整显示（留白，不裁掉边缘）");

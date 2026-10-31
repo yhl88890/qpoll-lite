@@ -128,6 +128,27 @@ public final class PanelProtocol {
         }
         return packed;
     }
+    /**
+     * A0 屏行交错映射（A1 直接返回原帧）。
+     * 华为 552×768 四色屏有两种实物变体：协议完全相同，唯一区别是控制器行排列——
+     *   A1（默认，我们两块验证屏都是）= 552 个控制器行按逻辑序 0→551 直排；
+     *   A0 = 对折交错：前半 276 行放偶数行位（row r → 2r），后半 276 行倒序放奇数行位
+     *        （row r → 1103-2r）；行宽 = HEIGHT/4 = 192 字节。
+     * 来源：ZhaoGY-N/huawei-nfc-eink-android-app v2.10-test1 PanelType.map（该映射与其
+     * 参考实现 solar2ain/ink-nfc-fmsc-by-pn532 的 pack_indices 逐字节比对一致），
+     * 此处按行映射协议事实独立实现。⚠️ 我们没有 A0 实物屏，此路径未经实物刷机验证；
+     * D1 读不出屏型——若刷出「隔列错乱 + 半边倒序」画面，实物即为 A0，切换后重刷。
+     */
+    public static byte[] mapA0Rows(byte[] packed) {
+        if(packed.length!=IMAGE_BYTES)throw new IllegalArgumentException("图像必须为 105984 字节");
+        byte[] out=new byte[packed.length];
+        final int stride=HEIGHT/4;
+        for(int row=0;row<WIDTH;row++) {
+            int target=row<WIDTH/2?2*row:2*WIDTH-1-2*row;
+            System.arraycopy(packed,row*stride,out,target*stride,stride);
+        }
+        return out;
+    }
     /** Valid LZO1X literal-only stream. No native library and no padding of the final block. */
     public static byte[] literalLzo(byte[] raw) {
         if(raw.length<1||raw.length>2000)throw new IllegalArgumentException("LZO 块尺寸错误");
