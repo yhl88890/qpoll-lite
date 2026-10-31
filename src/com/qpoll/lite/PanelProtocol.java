@@ -331,6 +331,13 @@ public final class PanelProtocol {
     public static final int POWER_MS = 500;
     public boolean write(byte[] packed,boolean officialCheck) throws Exception {
         if(packed.length!=IMAGE_BYTES)throw new IllegalArgumentException("图像必须为 105984 字节");
+        /*
+         * 0x00 蓄能实验已结案（10-31 晚，K90 实测）：0x00 模式上电等待 2000ms vs 500ms，
+         * D4 阻塞 4.28s vs 2.55s——多出的 1.5s 全部是干等，自检失败耗时不变（约 2s），照样 68CA。
+         * 自检发生在升压稳态之后，稳态电压由耦合水平决定，蓄能时间无关。
+         * K90×0x00 盖棺：起跑资格由耦合决定，与权限/对位手法/上电等待均无关。
+         * 两档统一 500ms 官方值。
+         */
         byte[] refresh=d4(POWER_MS,officialCheck); // Validate every option before any authentication/write.
         control.event("TIMING","上电等待="+POWER_MS+" ms（官方值）；查电模式="
                 +(officialCheck?"官方（屏查电，刷完才回）":"快速（收到即回，配合保场 20 秒）"));

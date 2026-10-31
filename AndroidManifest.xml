@@ -1,4 +1,4 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.qpoll.lite" android:versionCode="66" android:versionName="1.4.33">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.qpoll.lite" android:versionCode="67" android:versionName="1.4.34">
     <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="34" />
     <uses-permission android:name="android.permission.NFC" />
     <!-- 诊断版专用：让 App 自己能发 Q-Poll，避免引入 Shizuku 变量。正式版会去掉。 -->
