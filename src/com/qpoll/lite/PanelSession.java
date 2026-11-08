@@ -16,7 +16,10 @@ public final class PanelSession {
         byte[] config=read(jobFile,8192);JSONObject job=new JSONObject(new String(config,"UTF-8"));
         final boolean refresh=mode.equals("refresh");
         final int chargeMs=refresh?job.optInt("chargeMs",0):0;
+        final boolean officialCheck=job.optBoolean("officialCheck",false);
+        final int holdSeconds=refresh?job.optInt("holdSeconds",PanelProtocol.DEFAULT_HOLD_SECONDS):PanelProtocol.DEFAULT_HOLD_SECONDS;
         if(chargeMs<0||chargeMs>PanelProtocol.MAX_CHARGE_MS)throw new IllegalArgumentException("发送前充能时间必须为 0–30 秒");
+        PanelProtocol.validateHoldSeconds(holdSeconds);
         byte[] image=null;
         if(refresh) {
             PanelType type=PanelType.parse(job.optString("panelType",""));
@@ -27,9 +30,9 @@ public final class PanelSession {
             if(image.length!=PanelProtocol.IMAGE_BYTES||!PanelProtocol.toHex(MessageDigest.getInstance("SHA-256").digest(image)).equalsIgnoreCase(job.getString("sha256")))
                 throw new IllegalArgumentException("预览与图片快照校验不符，未发送 APDU");
         }
-        // 刷新模式的总预算：传图约 17 秒，刷完再供能最多 20+90 秒，加起来 ~130 秒，
-        // 留到 240 秒是为了别让总预算在半路把供能掐断（一掐断图就废了）。
-        final long deadline=SystemClock.elapsedRealtime()+(refresh?240000+chargeMs:15000);
+        // 保留默认 20 秒的原通信预算，并为更长的供能预留额外时间。
+        long extraHoldMs=officialCheck?0:1000L*Math.max(0,holdSeconds-PanelProtocol.DEFAULT_HOLD_SECONDS);
+        final long deadline=SystemClock.elapsedRealtime()+(refresh?240000+chargeMs+extraHoldMs:15000);
         PanelProtocol.Control control=new PanelProtocol.Control() {
             public long now(){return SystemClock.elapsedRealtime();}
             public void sleep(long ms)throws Exception{Thread.sleep(ms);}
@@ -63,7 +66,7 @@ public final class PanelSession {
             // 区别只在结论文案，协议层不要写图——probe 根本没有图，走 write 会空指针。
             if(mode.equals("identity")||mode.equals("probe"))protocol.identify();
             else {
-                protocol.write(image,job.optBoolean("officialCheck",false),chargeMs);
+                protocol.write(image,officialCheck,chargeMs,holdSeconds);
             }
         } finally {try{iso.close();}catch(Exception e){events.emit("CLOSE_ERROR","关闭 ISO-DEP："+e);}}
     }

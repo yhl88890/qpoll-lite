@@ -265,6 +265,8 @@ public final class FrontSession {
                 PanelSession.run(tag, mode, jobFile, stopFile,
                         (kind, message) -> main.post(() -> signal(kind, message)));
                 if (mode.equals("identity")) main.post(() -> signal("RESULT", "D1 屏幕规格校验通过，未写图像"));
+            } catch (InterruptedException e) {
+                main.post(() -> signal("CANCELLED", e.getMessage()));
             } catch (Throwable e) {
                 main.post(() -> signal("ERROR", e.getClass().getSimpleName() + ": " + e.getMessage()));
             } finally {

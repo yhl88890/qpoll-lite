@@ -79,7 +79,7 @@ public final class ShellBridge extends Binder {
         if (code == 16777115) { // Shizuku 的销毁通知
             cancel();
             new Thread(() -> {
-                long deadline = SystemClock.elapsedRealtime() + 330000;
+                long deadline = SystemClock.elapsedRealtime() + 370000;
                 while (active && SystemClock.elapsedRealtime() < deadline) SystemClock.sleep(100);
                 System.exit(0);
             }, "nfc-destroy").start();
@@ -245,7 +245,7 @@ public final class ShellBridge extends Binder {
             final java.lang.Process running = child;
             Thread deadline = new Thread(() -> {
                 try {
-                    if (!running.waitFor(320, TimeUnit.SECONDS)) {
+                    if (!running.waitFor(360, TimeUnit.SECONDS)) {
                         mark.createNewFile();
                         if (!running.waitFor(10, TimeUnit.SECONDS)) running.destroy();
                     }

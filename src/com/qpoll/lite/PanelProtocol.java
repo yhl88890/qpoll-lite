@@ -11,14 +11,14 @@ import java.util.Map;
 public final class PanelProtocol {
     public static final int WIDTH=552, HEIGHT=768, IMAGE_BYTES=105984;
     public static final int MAX_CHARGE_MS=30000;
-    public static final int DEFAULT_POLL_MS=500;
     /**
      * D4 之后继续供能的秒数。
      *
      * <p>墨水屏的刷新波形要跑十几秒，这期间全靠 NFC 场供电。发完 D4 就撒手等于中途断电，
      * 画面会回滚成原样——「提示刷完了但屏没变」多半就是这里被掐了。
      */
-    static final int HOLD_SECONDS=20;
+    static final int DEFAULT_HOLD_SECONDS=20;
+    static final int MAX_HOLD_SECONDS=60;
     /**
      * D4 之后是否持续发 {@code DE} 喂场。默认 <b>true（喂）</b>——12T 小线圈的活命开关。
      *
@@ -337,8 +337,16 @@ public final class PanelProtocol {
         return write(packed,officialCheck,0);
     }
     public boolean write(byte[] packed,boolean officialCheck,int chargeMs) throws Exception {
+        return write(packed,officialCheck,chargeMs,DEFAULT_HOLD_SECONDS);
+    }
+    static void validateHoldSeconds(int holdSeconds) {
+        if(holdSeconds<0||holdSeconds>MAX_HOLD_SECONDS)
+            throw new IllegalArgumentException("刷新后供能时间必须为 0–"+MAX_HOLD_SECONDS+" 秒");
+    }
+    public boolean write(byte[] packed,boolean officialCheck,int chargeMs,int holdSeconds) throws Exception {
         if(packed.length!=IMAGE_BYTES)throw new IllegalArgumentException("图像必须为 105984 字节");
         if(chargeMs<0||chargeMs>MAX_CHARGE_MS)throw new IllegalArgumentException("发送前充能时间必须为 0–30 秒");
+        validateHoldSeconds(holdSeconds);
         /*
          * 0x00 蓄能实验已结案（10-31 晚，K90 实测）：0x00 模式上电等待 2000ms vs 500ms，
          * D4 阻塞 4.28s vs 2.55s——多出的 1.5s 全部是干等，自检失败耗时不变（约 2s），照样 68CA。
@@ -348,7 +356,7 @@ public final class PanelProtocol {
          */
         byte[] refresh=d4(POWER_MS,officialCheck); // Validate every option before any authentication/write.
         control.event("TIMING","上电等待="+POWER_MS+" ms（官方值）；查电模式="
-                +(officialCheck?"官方（屏查电，刷完才回）":"快速（收到即回，配合保场 20 秒）"));
+                +(officialCheck?"官方（屏查电，刷完才回）":"快速（收到即回，刷新后供能 "+holdSeconds+" 秒）"));
         if(chargeMs>0){
             control.event("STAGE","charging|发送前充能，请保持贴合");
             control.event("WAIT","charging|"+control.now()+"|"+chargeMs);
@@ -428,7 +436,7 @@ public final class PanelProtocol {
              * 墨水屏刷新要屏内升压，这点电全靠 NFC 场现供；场一断刷新就停在半路，
              * e-ink 被打断会自己回滚到原画面——现象正是「App 提示成功、屏一点没变」。
              *
-             * 所以 D4 之后按住 20 秒不撒手。这个 20 秒是实测能正常刷完的值，别乱动。
+             * 所以 D4 之后按设定时间继续供能，默认使用实测的 20 秒。
              *
              * ⚠️ 保场期间一条命令都不发（1.4.35 定案，见类头喂场退役注释）：
              *    ① DE 应答不可信——K90 上 70 秒 35 次恒值假信号，1.3.1 拿它当忙闲
@@ -436,24 +444,27 @@ public final class PanelProtocol {
              *    ② K90 装死屏：DE 通信打断刷新波形（1.4.5~1.4.10 六轮「只闪一下」）；
              *    ③ 12T 活屏：喂场也无益（11-1 干睡 A/B 平反，见类头）。
              */
-            control.event("HOLD","刷新中，保持贴合别动（供能 20 秒）");
-            long deadline=control.now()+HOLD_SECONDS*1000L;
-            long nextTick=control.now()+1000L;
-            while(control.now()<deadline) {
-                control.sleep(DEFAULT_POLL_MS);
-                if(control.now()>=nextTick) {
-                    long left=Math.max(0,(deadline-control.now()+999)/1000);
-                    if(left>0)control.event("HOLD","还剩 "+left+" 秒 · 别松手别点停止");
-                    nextTick+=1000L;
-                }
-                pause(DEFAULT_POLL_MS);
-            }
-            control.event("REFRESH_DONE","供能 " + HOLD_SECONDS + " 秒完成（干睡，零查询）；图已全部传完，请目视确认画面");
+            holdAfterRefresh(holdSeconds);
             return true;
         }
         control.event("REFRESH_UNCONFIRMED","刷新命令没有启动：SW="+String.format("%04X",finalStatus)
                 +"（"+meaning(finalStatus)+"）。图已全部传完，卡在最后上电这一步。");
         throw new IllegalArgumentException("D4 刷新：SW="+String.format("%04X",finalStatus)
                 +"（"+meaning(finalStatus)+"），已停止，不重发");
+    }
+
+    private void holdAfterRefresh(int seconds) throws Exception {
+        long deadline=control.now()+seconds*1000L;
+        try {
+            for(long remaining=deadline-control.now();remaining>0;remaining=deadline-control.now()) {
+                control.check();
+                control.event("HOLD","供能还剩 "+((remaining+999)/1000)+" 秒 · 保持贴合");
+                pause(Math.min(1000,Math.max(0,deadline-control.now())));
+            }
+            control.check();
+        } catch(InterruptedException stopped) {
+            throw new InterruptedException("已停止刷新后供能；刷新结果待目视确认");
+        }
+        control.event("HOLD_DONE",(seconds==0?"已跳过额外供能":"刷新后供能 "+seconds+" 秒结束")+"；请目视确认画面");
     }
 }

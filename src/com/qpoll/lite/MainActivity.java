@@ -581,19 +581,22 @@ public final class MainActivity extends Activity {
         } catch (Throwable ignored) { }
         if (prepared == null) { Toast.makeText(this, "还没有图，先选一张", Toast.LENGTH_SHORT).show(); return; }
         final int chargeSeconds = chargeSeconds();
+        final boolean officialCheck = officialCheck();
+        final int holdSeconds = holdSeconds();
         new AlertDialog.Builder(this)
                 .setTitle("写入这块墨水屏？")
                 .setMessage("会替换屏上当前的画面。\n\n风格：" + prepared.settings
                         + "\n发送前充能：" + chargeSeconds + " 秒"
                         + "\n上电等待：" + PanelProtocol.POWER_MS + " ms（官方值）"
-                        + "\n查电模式：" + (officialCheck() ? "官方（刷完才回）" : "快速（收到即回）")
+                        + "\n查电模式：" + (officialCheck ? "官方（刷完才回）" : "快速（收到即回）")
+                        + (officialCheck ? "" : "\n刷新后供能：" + holdSeconds + " 秒")
                         + "\n屏幕类型：" + prepared.panelType
                         + "\n\n贴稳别动，全程保持本页在前台，直到提示结束。中途断开可能留下半张图。")
                 .setNegativeButton("再看看", null)
-                .setPositiveButton("开始刷新", (d, w) -> startRefresh(chargeSeconds)).show();
+                .setPositiveButton("开始刷新", (d, w) -> startRefresh(chargeSeconds, officialCheck, holdSeconds)).show();
     }
 
-    private void startRefresh(int chargeSeconds) {
+    private void startRefresh(int chargeSeconds, boolean officialCheck, int holdSeconds) {
         if (busy || preparing || !resumed || prepared == null) return;
         if (!prepared.panelType.equals(panelType())) { render(); return; }
         final String id = Long.toString(SystemClock.elapsedRealtime());
@@ -608,8 +611,9 @@ public final class MainActivity extends Activity {
             job.put("panelType", prepared.panelType);
             job.put("imageFile", imageFile.getAbsolutePath());
             job.put("sha256", sha);
-            job.put("officialCheck", officialCheck());
+            job.put("officialCheck", officialCheck);
             job.put("chargeMs", chargeSeconds * 1000);
+            job.put("holdSeconds", holdSeconds);
             try (FileOutputStream out = new FileOutputStream(jobFile)) { out.write(job.toString().getBytes("UTF-8")); }
             append("图片参数：" + prepared.settings);
             if (chargeSeconds > 0) append("发送前充能：" + chargeSeconds + " 秒");
@@ -689,7 +693,7 @@ public final class MainActivity extends Activity {
         boolean cancelSent = false, ended = false;
         try {
             boolean running = true;
-            long deadline = SystemClock.elapsedRealtime() + 335000;
+            long deadline = SystemClock.elapsedRealtime() + 375000;
             while (running) {
                 if (stop.exists() && !cancelSent) { cancelBridge(); cancelSent = true; }
                 request = Parcel.obtain(); reply = Parcel.obtain();
@@ -773,7 +777,7 @@ public final class MainActivity extends Activity {
             detail.setText("跟屏幕的连接断了——通常是屏被挪动、或者贴合松了。这张图没写进去，"
                     + "重新贴稳再刷一次就行（不用重启 NFC）。");
         }
-        if (kind.equals("REFRESH_DONE") || kind.equals("REFRESH_UNCONFIRMED")
+        if (kind.equals("REFRESH_DONE") || kind.equals("REFRESH_UNCONFIRMED") || kind.equals("HOLD_DONE")
                 || kind.equals("ERROR") || kind.equals("RESULT") || kind.equals("CANCELLED")) {
             terminalSeen = true;
         }
@@ -825,12 +829,10 @@ public final class MainActivity extends Activity {
             main.removeCallbacks(tick);
             state.setText("正在刷新屏幕");
             detail.setText(message);
-            // 保场这十几秒一旦被「停止」打断，NFC 场消失，屏掉电，本次刷新直接作废。
-            // 所以这段时间把停止按钮锁死，视觉上也说清楚。
-            if (stopButton != null) {
-                stopButton.setEnabled(false);
-                stopButton.setText("刷新供能中，请勿停止");
-            }
+        }
+        if (kind.equals("HOLD_DONE")) {
+            state.setText("请确认屏幕画面");
+            detail.setText(message);
         }
         if (kind.equals("REFRESH_DONE") || kind.equals("REFRESH_UNCONFIRMED")) {
             boolean done = kind.equals("REFRESH_DONE");
@@ -986,7 +988,7 @@ public final class MainActivity extends Activity {
     // ───────────────────────── 设置 ─────────────────────────
 
     /**
-     * D4 第 4 字节查电模式：false = 0x80 收到即回（现状，配合 20 秒保场）；
+     * D4 第 4 字节查电模式：false = 0x80 收到即回（配合可调的刷新后供能）；
      * true = 0x00 官方查电（屏刷完才回，省约 4 秒，保场由屏自己兜）。
      * 10-31 定案：贴合差时 0x00 会如实报 68CA——贴合好才建议开。
      */
@@ -997,6 +999,11 @@ public final class MainActivity extends Activity {
     private int chargeSeconds() {
         int saved = getSharedPreferences(PREFS, MODE_PRIVATE).getInt("chargeSeconds", 0);
         return Math.max(0, Math.min(PanelProtocol.MAX_CHARGE_MS / 1000, saved));
+    }
+
+    private int holdSeconds() {
+        int saved = getSharedPreferences(PREFS, MODE_PRIVATE).getInt("holdSeconds", PanelProtocol.DEFAULT_HOLD_SECONDS);
+        return Math.max(0, Math.min(PanelProtocol.MAX_HOLD_SECONDS, saved));
     }
 
     private void showSettings() {
@@ -1044,17 +1051,36 @@ public final class MainActivity extends Activity {
 
         body.addView(text("上电查电模式", 13, 0xff52635d));
         final Spinner checkMode = new Spinner(this);
-        String[] checkLabels = {"快速（默认）· 屏收到就回，App 保场 20 秒", "官方查电 · 屏刷完才回，省约 4 秒（屏自己兜保电）"};
+        final Spinner hold = new Spinner(this);
+        String[] checkLabels = {"快速（默认）· 屏收到就回，App 继续供能", "官方查电 · 屏刷完才回，省约 4 秒（屏自己兜保电）"};
         checkMode.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, checkLabels));
         checkMode.setSelection(officialCheck() ? 1 : 0);
         checkMode.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
             public void onItemSelected(AdapterView<?> p, View v, int pos, long id) {
                 getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean("officialCheck", pos == 1).apply();
+                hold.setEnabled(!busy && pos == 0);
             }
             public void onNothingSelected(AdapterView<?> p) { }
         });
         body.addView(checkMode, new LinearLayout.LayoutParams(-1, dp(44)));
         body.addView(text("官方查电模式贴合差时会如实报 68CA；贴合不稳就用快速模式。", 11, 0xff68766e));
+
+        body.addView(text("刷新后供能时间（快速模式）", 13, 0xff52635d));
+        String[] holdOptions = new String[PanelProtocol.MAX_HOLD_SECONDS + 1];
+        for (int i = 0; i < holdOptions.length; i++) holdOptions[i] = i + " 秒";
+        holdOptions[0] = "0 秒（跳过）";
+        holdOptions[PanelProtocol.DEFAULT_HOLD_SECONDS] += "（默认）";
+        hold.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, holdOptions));
+        hold.setSelection(holdSeconds());
+        hold.setEnabled(!busy && !officialCheck());
+        hold.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            public void onItemSelected(AdapterView<?> p, View v, int pos, long id) {
+                getSharedPreferences(PREFS, MODE_PRIVATE).edit().putInt("holdSeconds", pos).apply();
+            }
+            public void onNothingSelected(AdapterView<?> p) { }
+        });
+        body.addView(hold, new LinearLayout.LayoutParams(-1, dp(44)));
+        body.addView(text("快速模式下保持贴合。可中途停止，停止后请目视确认屏幕画面。", 11, 0xff68766e));
 
         final android.widget.CheckBox letterboxBox = new android.widget.CheckBox(this);
         letterboxBox.setText("完整显示（留白，不裁掉边缘）");
